@@ -1,1 +1,0 @@
-# Transkrip-dengan-Timestamp
