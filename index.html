@@ -1,0 +1,669 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Transkrip Audio/Video → Teks + Timestamp</title>
+<style>
+  :root {
+    --bg: #0f1216;
+    --panel: #171b22;
+    --panel-2: #1e242d;
+    --border: #2a323d;
+    --text: #e8edf3;
+    --muted: #93a1b3;
+    --accent: #5b8cff;
+    --accent-2: #7c5bff;
+    --green: #34d399;
+    --red: #f87171;
+    --shadow: 0 10px 30px rgba(0,0,0,.35);
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    background: radial-gradient(1200px 600px at 80% -10%, rgba(124,91,255,.18), transparent 60%),
+                radial-gradient(1000px 500px at -10% 0%, rgba(91,140,255,.16), transparent 55%),
+                var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+    line-height: 1.5;
+  }
+  .wrap { max-width: 980px; margin: 0 auto; padding: 28px 20px 80px; }
+  header.app { text-align: center; margin-bottom: 26px; }
+  header.app h1 { font-size: 26px; margin: 0 0 6px; letter-spacing: -.3px; }
+  header.app h1 .grad {
+    background: linear-gradient(90deg, var(--accent), var(--accent-2));
+    -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent;
+  }
+  header.app p { color: var(--muted); margin: 0; font-size: 14px; }
+
+  .card {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    padding: 20px;
+    box-shadow: var(--shadow);
+    margin-bottom: 18px;
+  }
+
+  /* Drop zone */
+  .drop {
+    border: 2px dashed var(--border);
+    border-radius: 14px;
+    padding: 34px 20px;
+    text-align: center;
+    cursor: pointer;
+    transition: border-color .15s, background .15s, transform .05s;
+    background: var(--panel-2);
+  }
+  .drop:hover { border-color: var(--accent); }
+  .drop.drag { border-color: var(--accent); background: rgba(91,140,255,.08); }
+  .drop .ico { font-size: 34px; }
+  .drop .big { font-size: 16px; font-weight: 600; margin-top: 8px; }
+  .drop .small { color: var(--muted); font-size: 13px; margin-top: 4px; }
+  .filechip {
+    display: inline-flex; align-items: center; gap: 10px;
+    background: var(--panel-2); border: 1px solid var(--border);
+    padding: 10px 14px; border-radius: 12px; margin-top: 12px; font-size: 14px;
+  }
+  .filechip .name { font-weight: 600; max-width: 360px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .filechip .meta { color: var(--muted); }
+
+  /* Controls */
+  .controls { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-top: 18px; }
+  @media (max-width: 640px){ .controls { grid-template-columns: 1fr; } }
+  .field label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 6px; text-transform: uppercase; letter-spacing: .4px; }
+  select, button { font-family: inherit; font-size: 14px; }
+  select {
+    width: 100%; padding: 11px 12px; border-radius: 10px;
+    background: var(--panel-2); color: var(--text); border: 1px solid var(--border);
+    appearance: none;
+  }
+  select:focus { outline: none; border-color: var(--accent); }
+
+  .row { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin-top: 18px; }
+  button.btn {
+    border: none; cursor: pointer; padding: 12px 20px; border-radius: 11px; font-weight: 600;
+    background: linear-gradient(90deg, var(--accent), var(--accent-2)); color: white;
+    transition: opacity .15s, transform .05s; box-shadow: 0 6px 18px rgba(91,140,255,.35);
+  }
+  button.btn:hover { opacity: .94; }
+  button.btn:active { transform: translateY(1px); }
+  button.btn:disabled { opacity: .45; cursor: not-allowed; box-shadow: none; }
+  button.ghost {
+    background: var(--panel-2); color: var(--text); border: 1px solid var(--border); box-shadow: none;
+    padding: 9px 14px; border-radius: 10px; cursor: pointer; font-weight: 600;
+  }
+  button.ghost:hover { border-color: var(--accent); }
+  button.ghost:disabled { opacity: .4; cursor: not-allowed; }
+
+  .hint { font-size: 12.5px; color: var(--muted); }
+  .badge { display:inline-block; font-size: 11px; padding: 3px 8px; border-radius: 999px; border:1px solid var(--border); color: var(--muted); }
+  .badge.ok { color: var(--green); border-color: rgba(52,211,153,.4); }
+  .badge.warn { color: #fbbf24; border-color: rgba(251,191,36,.4); }
+
+  /* Progress */
+  .progress-wrap { margin-top: 16px; display: none; }
+  .progress-wrap.show { display: block; }
+  .pbar { height: 10px; background: var(--panel-2); border-radius: 999px; overflow: hidden; border: 1px solid var(--border); }
+  .pbar > i { display:block; height:100%; width:0%; background: linear-gradient(90deg, var(--accent), var(--accent-2)); transition: width .2s; }
+  .pbar.indet > i { width: 35% !important; animation: slide 1.2s infinite ease-in-out; }
+  @keyframes slide { 0%{margin-left:-35%} 100%{margin-left:100%} }
+  .pstatus { font-size: 13px; color: var(--muted); margin-top: 8px; display:flex; justify-content: space-between; }
+
+  /* Player */
+  .player-wrap { margin-top: 4px; }
+  .player-wrap video, .player-wrap audio { width: 100%; border-radius: 12px; background: #000; }
+
+  /* Transcript */
+  .transcript { margin-top: 4px; max-height: 460px; overflow: auto; padding-right: 6px; }
+  .seg {
+    display: grid; grid-template-columns: 96px 1fr; gap: 12px; padding: 10px 10px;
+    border-radius: 10px; cursor: pointer; border: 1px solid transparent;
+  }
+  .seg:hover { background: var(--panel-2); }
+  .seg.active { background: rgba(91,140,255,.14); border-color: rgba(91,140,255,.4); }
+  .seg .ts { color: var(--accent); font-variant-numeric: tabular-nums; font-size: 12.5px; padding-top: 1px; user-select: none; }
+  .seg .tx { font-size: 15px; }
+
+  .export-bar { display:flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+  .export-bar .spacer { flex: 1; }
+  .check { display:flex; align-items:center; gap:7px; font-size: 13px; color: var(--muted); cursor: pointer; }
+  .check input { accent-color: var(--accent); }
+
+  .section-title { display:flex; align-items:center; justify-content: space-between; margin: 2px 0 14px; }
+  .section-title h2 { font-size: 16px; margin: 0; }
+  .hidden { display: none !important; }
+
+  .error {
+    background: rgba(248,113,113,.1); border:1px solid rgba(248,113,113,.4); color: #fecaca;
+    padding: 12px 14px; border-radius: 10px; font-size: 14px; margin-top: 14px;
+  }
+  .toast {
+    position: fixed; bottom: 22px; left: 50%; transform: translateX(-50%) translateY(20px);
+    background: var(--panel); border:1px solid var(--border); color: var(--text);
+    padding: 10px 18px; border-radius: 999px; box-shadow: var(--shadow); opacity: 0; transition: .25s;
+    font-size: 14px; pointer-events: none;
+  }
+  .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+  a.footer-link { color: var(--accent); text-decoration: none; }
+  footer.app { text-align:center; color: var(--muted); font-size: 12.5px; margin-top: 24px; }
+
+  /* mobile note */
+  .note {
+    margin-top: 12px; font-size: 13px; line-height: 1.45;
+    background: rgba(91,140,255,.10); border: 1px solid rgba(91,140,255,.35);
+    color: #cdd9ff; padding: 11px 13px; border-radius: 10px;
+  }
+  .note b { color: #fff; }
+
+  /* nicer tap feedback on touch screens */
+  button, .drop, .seg, select { -webkit-tap-highlight-color: transparent; }
+  .drop:focus-visible, button:focus-visible, select:focus-visible {
+    outline: 2px solid var(--accent); outline-offset: 2px;
+  }
+
+  /* ---------- mobile responsiveness ---------- */
+  @media (max-width: 640px) {
+    .wrap { padding: 18px 14px 72px; }
+    header.app h1 { font-size: 21px; }
+    header.app p { font-size: 12.5px; }
+    .card { padding: 16px; border-radius: 14px; }
+    .drop { padding: 26px 14px; }
+    .drop .big { font-size: 15px; }
+    .drop .small { font-size: 12px; }
+    select { font-size: 16px; }              /* cegah auto-zoom saat fokus di iOS */
+    button.btn { width: 100%; min-height: 48px; }
+    button.ghost { min-height: 44px; }
+    .row { gap: 10px; }
+    #device.badge { width: 100%; text-align: center; }
+    .seg { grid-template-columns: 54px 1fr; gap: 8px; padding: 11px 6px; }
+    .seg .tx { font-size: 15px; }
+    .transcript { max-height: 52vh; }
+    .player-wrap video { max-height: 240px !important; }
+    .export-bar { gap: 8px; }
+    .export-bar button.ghost { flex: 1 1 30%; text-align: center; }
+    .export-bar .spacer { display: none; }
+    .check { width: 100%; justify-content: center; margin-top: 4px; }
+    .filechip .name { max-width: 200px; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="app">
+    <h1>🎙️ <span class="grad">Transkrip</span> Audio &amp; Video</h1>
+    <p>Ubah audio/video jadi teks ber-timestamp — diproses 100% di komputermu, tanpa upload.</p>
+  </header>
+
+  <!-- Upload + controls -->
+  <div class="card">
+    <div id="drop" class="drop" tabindex="0" role="button" aria-label="Pilih file audio atau video untuk ditranskrip">
+      <div class="ico">📂</div>
+      <div class="big">Tarik file ke sini, atau klik untuk pilih</div>
+      <div class="small">Mendukung MP3, WAV, M4A, MP4, MOV, WEBM, dan lainnya</div>
+      <input id="file" type="file" accept="audio/*,video/*" class="hidden" />
+    </div>
+    <div id="fileInfo"></div>
+
+    <div class="controls">
+      <div class="field">
+        <label for="model">Model (akurasi vs kecepatan)</label>
+        <select id="model">
+          <option value="onnx-community/whisper-tiny">Tiny — paling cepat, akurasi dasar (~75 MB)</option>
+          <option value="onnx-community/whisper-base" selected>Base — seimbang (disarankan) (~145 MB)</option>
+          <option value="onnx-community/whisper-small">Small — paling akurat, lebih lambat (~480 MB)</option>
+        </select>
+      </div>
+      <div class="field">
+        <label for="lang">Bahasa audio</label>
+        <select id="lang">
+          <option value="auto" selected>Auto-detect</option>
+          <option value="indonesian">Indonesia</option>
+          <option value="english">Inggris</option>
+          <option value="malay">Melayu</option>
+          <option value="javanese">Jawa</option>
+          <option value="sundanese">Sunda</option>
+          <option value="arabic">Arab</option>
+          <option value="mandarin">Mandarin</option>
+          <option value="japanese">Jepang</option>
+          <option value="korean">Korea</option>
+          <option value="spanish">Spanyol</option>
+          <option value="french">Prancis</option>
+          <option value="german">Jerman</option>
+        </select>
+      </div>
+    </div>
+
+    <div class="row">
+      <button id="run" class="btn" disabled>Mulai Transkrip</button>
+      <span id="device" class="badge">Memeriksa perangkat…</span>
+      <span class="hint">Model diunduh sekali, lalu tersimpan di cache browser.</span>
+    </div>
+
+    <div id="mobileNote" class="note hidden"></div>
+
+    <div id="progress" class="progress-wrap">
+      <div id="pbar" class="pbar"><i id="pbarFill"></i></div>
+      <div class="pstatus"><span id="pText">Menyiapkan…</span><span id="pTimer"></span></div>
+    </div>
+
+    <div id="error" class="error hidden"></div>
+  </div>
+
+  <!-- Results -->
+  <div id="results" class="card hidden">
+    <div class="player-wrap" id="playerWrap"></div>
+
+    <div class="section-title" style="margin-top:16px;">
+      <h2>Hasil Transkrip</h2>
+      <span id="segCount" class="badge"></span>
+    </div>
+
+    <div id="transcript" class="transcript"></div>
+
+    <div class="section-title" style="margin-top:18px;">
+      <h2>Ekspor</h2>
+    </div>
+    <div class="export-bar">
+      <button class="ghost" id="copyBtn">📋 Salin teks</button>
+      <button class="ghost" id="txtBtn">⬇️ TXT</button>
+      <button class="ghost" id="srtBtn">⬇️ SRT</button>
+      <button class="ghost" id="vttBtn">⬇️ VTT</button>
+      <span class="spacer"></span>
+      <label class="check"><input type="checkbox" id="txtTs" /> Sertakan timestamp di TXT</label>
+    </div>
+  </div>
+
+  <footer class="app">
+    Berjalan lokal dengan Whisper (transformers.js + WebGPU). Tidak ada data yang dikirim ke server.
+  </footer>
+</div>
+
+<div id="toast" class="toast"></div>
+
+<script>
+/* ------------------------------------------------------------------ *
+ *  Transkrip Audio/Video  -  single-file app
+ *  Engine: Whisper via @huggingface/transformers (WebGPU / WASM)
+ * ------------------------------------------------------------------ */
+
+const $ = (id) => document.getElementById(id);
+
+const els = {
+  drop: $('drop'), file: $('file'), fileInfo: $('fileInfo'),
+  model: $('model'), lang: $('lang'), run: $('run'), device: $('device'),
+  progress: $('progress'), pbar: $('pbar'), pbarFill: $('pbarFill'),
+  pText: $('pText'), pTimer: $('pTimer'), error: $('error'),
+  results: $('results'), playerWrap: $('playerWrap'),
+  transcript: $('transcript'), segCount: $('segCount'),
+  copyBtn: $('copyBtn'), txtBtn: $('txtBtn'), srtBtn: $('srtBtn'),
+  vttBtn: $('vttBtn'), txtTs: $('txtTs'), toast: $('toast'),
+  mobileNote: $('mobileNote'),
+};
+
+let currentFile = null;     // selected File
+let mediaEl = null;         // <audio>/<video>
+let segments = [];          // [{start, end, text}]
+let worker = null;
+let fileProgress = {};      // model download tracking
+let timerInt = null, timerStart = 0;
+
+/* ---------- device detection ---------- */
+const HAS_WEBGPU = typeof navigator !== 'undefined' && 'gpu' in navigator;
+function pickDevice() { return HAS_WEBGPU ? 'webgpu' : 'wasm'; }
+function pickDtype(device) {
+  return device === 'webgpu'
+    ? { encoder_model: 'fp32', decoder_model_merged: 'q4' }
+    : 'q8';
+}
+(function showDevice() {
+  if (HAS_WEBGPU) {
+    els.device.textContent = '⚡ WebGPU aktif';
+    els.device.className = 'badge ok';
+  } else {
+    els.device.textContent = 'CPU (WASM), lebih lambat';
+    els.device.className = 'badge warn';
+  }
+})();
+
+/* ---------- mobile tuning ---------- */
+const IS_MOBILE = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent)
+  || (window.matchMedia && window.matchMedia('(max-width: 640px)').matches);
+if (IS_MOBILE) {
+  els.model.value = 'onnx-community/whisper-tiny';
+  els.mobileNote.classList.remove('hidden');
+  els.mobileNote.innerHTML =
+    '📱 Terdeteksi perangkat mobile. Model <b>Tiny</b> dipilih otomatis supaya hemat memori. ' +
+    'Untuk hasil terbaik di HP: pakai klip pendek (idealnya di bawah ~10 menit) dan browser terbaru ' +
+    '(Chrome di Android, Safari di iOS 18+). File panjang bisa membuat tab kehabisan memori dan dimuat ulang.';
+}
+
+/* ---------- file selection ---------- */
+els.drop.addEventListener('click', () => els.file.click());
+els.file.addEventListener('change', (e) => { if (e.target.files[0]) setFile(e.target.files[0]); });
+['dragenter','dragover'].forEach(ev => els.drop.addEventListener(ev, (e)=>{ e.preventDefault(); els.drop.classList.add('drag'); }));
+['dragleave','drop'].forEach(ev => els.drop.addEventListener(ev, (e)=>{ e.preventDefault(); els.drop.classList.remove('drag'); }));
+els.drop.addEventListener('drop', (e) => {
+  const f = e.dataTransfer.files && e.dataTransfer.files[0];
+  if (f) setFile(f);
+});
+els.drop.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); els.file.click(); }
+});
+
+function fmtBytes(b) {
+  if (b < 1024) return b + ' B';
+  if (b < 1048576) return (b/1024).toFixed(1) + ' KB';
+  if (b < 1073741824) return (b/1048576).toFixed(1) + ' MB';
+  return (b/1073741824).toFixed(2) + ' GB';
+}
+
+function setFile(f) {
+  currentFile = f;
+  els.fileInfo.innerHTML =
+    '<div class="filechip"><span>🎵</span><span class="name">' +
+    f.name.replace(/</g,'&lt;') + '</span><span class="meta">· ' + fmtBytes(f.size) + '</span></div>';
+  els.run.disabled = false;
+  hideError();
+}
+
+/* ---------- audio decoding (any format browser supports) ---------- */
+async function decodeToMono16k(file) {
+  const arrayBuffer = await file.arrayBuffer();
+  const AC = window.AudioContext || window.webkitAudioContext;
+  const ctx = new AC();
+  let decoded;
+  try {
+    decoded = await ctx.decodeAudioData(arrayBuffer.slice(0));
+  } finally {
+    ctx.close && ctx.close();
+  }
+  const targetRate = 16000;
+  const length = Math.ceil(decoded.duration * targetRate);
+  const offline = new OfflineAudioContext(1, length, targetRate);
+  const src = offline.createBufferSource();
+  src.buffer = decoded;
+  src.connect(offline.destination);
+  src.start(0);
+  const rendered = await offline.startRendering();
+  return rendered.getChannelData(0); // Float32Array
+}
+
+/* ---------- worker (Whisper) built inline ---------- */
+function workerSource() {
+  return `
+    import { pipeline, env } from 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@3';
+    env.allowLocalModels = false;
+    let transcriber = null;
+    let loadedKey = null;
+
+    async function getTranscriber(model, device, dtype) {
+      const key = model + '|' + device;
+      if (transcriber && loadedKey === key) return transcriber;
+      transcriber = await pipeline('automatic-speech-recognition', model, {
+        device, dtype,
+        progress_callback: (p) => self.postMessage({ type: 'progress', data: p }),
+      });
+      loadedKey = key;
+      return transcriber;
+    }
+
+    self.onmessage = async (e) => {
+      const msg = e.data;
+      if (msg.type !== 'run') return;
+      try {
+        self.postMessage({ type: 'status', data: 'loading' });
+        const t = await getTranscriber(msg.model, msg.device, msg.dtype);
+        self.postMessage({ type: 'status', data: 'transcribing' });
+        const options = {
+          chunk_length_s: 30,
+          stride_length_s: 5,
+          return_timestamps: true,
+        };
+        if (msg.language && msg.language !== 'auto') {
+          options.language = msg.language;
+          options.task = 'transcribe';
+        }
+        const output = await t(msg.audio, options);
+        self.postMessage({ type: 'complete', data: output });
+      } catch (err) {
+        self.postMessage({ type: 'error', data: String((err && err.message) || err) });
+      }
+    };
+  `;
+}
+
+function ensureWorker() {
+  if (worker) return worker;
+  const blob = new Blob([workerSource()], { type: 'text/javascript' });
+  worker = new Worker(URL.createObjectURL(blob), { type: 'module' });
+  worker.onmessage = onWorkerMessage;
+  worker.onerror = (e) => { showError('Gagal memuat mesin transkrip: ' + (e.message || 'error tidak diketahui') + '. Pastikan dibuka lewat server lokal (file Mulai-Transkrip.command), bukan double-click langsung.'); resetRunning(); };
+  return worker;
+}
+
+function onWorkerMessage(e) {
+  const { type, data } = e.data;
+  if (type === 'progress') {
+    if (data.status === 'progress' && data.file) {
+      fileProgress[data.file] = { loaded: data.loaded || 0, total: data.total || 0 };
+      let l = 0, t = 0;
+      for (const k in fileProgress) { l += fileProgress[k].loaded; t += fileProgress[k].total; }
+      const pct = t ? Math.min(99, Math.round(l / t * 100)) : 0;
+      setDeterminate(pct, 'Mengunduh model… ' + pct + '%');
+    }
+  } else if (type === 'status') {
+    if (data === 'loading') setIndeterminate('Memuat model ke memori…');
+    if (data === 'transcribing') { setIndeterminate('Mentranskrip audio… (bisa beberapa menit untuk file panjang)'); startTimer(); }
+  } else if (type === 'complete') {
+    stopTimer();
+    renderResults(data);
+    setDeterminate(100, 'Selesai ✓');
+    setTimeout(() => els.progress.classList.remove('show'), 900);
+    resetRunning();
+  } else if (type === 'error') {
+    stopTimer();
+    showError('Terjadi kesalahan: ' + data);
+    resetRunning();
+  }
+}
+
+/* ---------- run ---------- */
+els.run.addEventListener('click', startTranscribe);
+
+async function startTranscribe() {
+  if (!currentFile) return;
+  hideError();
+  els.results.classList.add('hidden');
+  els.transcript.innerHTML = '';
+  fileProgress = {};
+  els.run.disabled = true;
+  els.progress.classList.add('show');
+  setIndeterminate('Membaca & mendekode audio…');
+
+  let audio;
+  try {
+    audio = await decodeToMono16k(currentFile);
+  } catch (err) {
+    showError('Tidak bisa membaca audio dari file ini. Format mungkin tidak didukung browser. Coba konversi ke MP3/WAV terlebih dulu. (' + (err.message || err) + ')');
+    resetRunning();
+    return;
+  }
+  if (!audio || audio.length === 0) {
+    showError('File tidak berisi audio yang bisa diproses.');
+    resetRunning();
+    return;
+  }
+
+  // build player
+  buildPlayer(currentFile);
+
+  const device = pickDevice();
+  const dtype = pickDtype(device);
+  const w = ensureWorker();
+  w.postMessage({
+    type: 'run',
+    audio,
+    model: els.model.value,
+    language: els.lang.value,
+    device, dtype,
+  }, [audio.buffer]);
+}
+
+function resetRunning() { els.run.disabled = !currentFile; }
+
+/* ---------- progress helpers ---------- */
+function setDeterminate(pct, text) {
+  els.pbar.classList.remove('indet');
+  els.pbarFill.style.width = pct + '%';
+  els.pText.textContent = text;
+}
+function setIndeterminate(text) {
+  els.pbar.classList.add('indet');
+  els.pbarFill.style.width = '35%';
+  els.pText.textContent = text;
+}
+function startTimer() {
+  timerStart = Date.now();
+  stopTimer();
+  timerInt = setInterval(() => {
+    const s = Math.floor((Date.now() - timerStart) / 1000);
+    els.pTimer.textContent = Math.floor(s/60) + 'm ' + (s%60) + 's';
+  }, 500);
+}
+function stopTimer() { if (timerInt) { clearInterval(timerInt); timerInt = null; } }
+
+/* ---------- player ---------- */
+function buildPlayer(file) {
+  els.playerWrap.innerHTML = '';
+  const url = URL.createObjectURL(file);
+  const isVideo = (file.type || '').startsWith('video');
+  mediaEl = document.createElement(isVideo ? 'video' : 'audio');
+  mediaEl.src = url;
+  mediaEl.controls = true;
+  if (isVideo) mediaEl.style.maxHeight = '360px';
+  els.playerWrap.appendChild(mediaEl);
+  mediaEl.addEventListener('timeupdate', highlightActive);
+}
+
+function highlightActive() {
+  if (!mediaEl) return;
+  const t = mediaEl.currentTime;
+  const nodes = els.transcript.children;
+  for (let i = 0; i < segments.length; i++) {
+    const s = segments[i];
+    const on = t >= s.start && (s.end == null || t < s.end);
+    if (nodes[i]) nodes[i].classList.toggle('active', on);
+  }
+}
+
+/* ---------- render transcript ---------- */
+function renderResults(output) {
+  const chunks = (output && output.chunks) ? output.chunks : null;
+  const duration = mediaEl && isFinite(mediaEl.duration) ? mediaEl.duration : null;
+
+  segments = [];
+  if (chunks && chunks.length) {
+    chunks.forEach((c, i) => {
+      const ts = c.timestamp || [];
+      let start = ts[0] != null ? ts[0] : 0;
+      let end = ts[1];
+      segments.push({ start, end, text: (c.text || '').trim() });
+    });
+    // fix trailing null ends
+    for (let i = 0; i < segments.length; i++) {
+      if (segments[i].end == null) {
+        segments[i].end = (i + 1 < segments.length) ? segments[i+1].start : (duration || segments[i].start + 3);
+      }
+    }
+  } else {
+    segments.push({ start: 0, end: duration || 0, text: ((output && output.text) || '').trim() });
+  }
+  // drop empties
+  segments = segments.filter(s => s.text.length > 0);
+
+  els.transcript.innerHTML = '';
+  segments.forEach((s, i) => {
+    const div = document.createElement('div');
+    div.className = 'seg';
+    div.innerHTML = '<span class="ts">' + fmtTime(s.start, ':', false) + '</span>' +
+                    '<span class="tx"></span>';
+    div.querySelector('.tx').textContent = s.text;
+    div.addEventListener('click', () => { if (mediaEl) { mediaEl.currentTime = s.start; mediaEl.play(); } });
+    els.transcript.appendChild(div);
+  });
+
+  els.segCount.textContent = segments.length + ' segmen';
+  els.results.classList.remove('hidden');
+  els.results.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+/* ---------- time formatting ---------- */
+function pad(n, l) { return String(n).padStart(l || 2, '0'); }
+function fmtTime(sec, msSep, withMs) {
+  if (sec == null || isNaN(sec)) sec = 0;
+  if (sec < 0) sec = 0;
+  const h = Math.floor(sec / 3600);
+  const m = Math.floor((sec % 3600) / 60);
+  const s = Math.floor(sec % 60);
+  const ms = Math.round((sec - Math.floor(sec)) * 1000);
+  let base = pad(h) + ':' + pad(m) + ':' + pad(s);
+  if (withMs) base += (msSep || ',') + pad(ms, 3);
+  else if (h === 0) base = pad(m) + ':' + pad(s); // short label hides hours when 0
+  return base;
+}
+
+/* ---------- exports ---------- */
+function buildTXT(withTs) {
+  if (withTs) return segments.map(s => '[' + fmtTime(s.start, ':', false) + '] ' + s.text).join('\n');
+  return segments.map(s => s.text).join(' ').replace(/\s+/g, ' ').trim();
+}
+function buildSRT() {
+  return segments.map((s, i) =>
+    (i+1) + '\n' +
+    fmtTime(s.start, ',', true) + ' --> ' + fmtTime(s.end != null ? s.end : s.start + 2, ',', true) + '\n' +
+    s.text + '\n'
+  ).join('\n');
+}
+function buildVTT() {
+  return 'WEBVTT\n\n' + segments.map((s) =>
+    fmtTime(s.start, '.', true) + ' --> ' + fmtTime(s.end != null ? s.end : s.start + 2, '.', true) + '\n' +
+    s.text + '\n'
+  ).join('\n');
+}
+function baseName() {
+  const n = currentFile ? currentFile.name.replace(/\.[^.]+$/, '') : 'transkrip';
+  return n || 'transkrip';
+}
+function download(text, ext) {
+  const blob = new Blob([text], { type: 'text/plain;charset=utf-8' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = baseName() + '.' + ext;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+}
+
+els.txtBtn.addEventListener('click', () => download(buildTXT(els.txtTs.checked), 'txt'));
+els.srtBtn.addEventListener('click', () => download(buildSRT(), 'srt'));
+els.vttBtn.addEventListener('click', () => download(buildVTT(), 'vtt'));
+els.copyBtn.addEventListener('click', async () => {
+  try { await navigator.clipboard.writeText(buildTXT(els.txtTs.checked)); toast('Teks disalin ✓'); }
+  catch { toast('Gagal menyalin'); }
+});
+
+/* ---------- ui helpers ---------- */
+function showError(msg) { els.error.textContent = msg; els.error.classList.remove('hidden'); }
+function hideError() { els.error.classList.add('hidden'); }
+let toastT = null;
+function toast(msg) {
+  els.toast.textContent = msg;
+  els.toast.classList.add('show');
+  clearTimeout(toastT);
+  toastT = setTimeout(() => els.toast.classList.remove('show'), 1800);
+}
+</script>
+</body>
+</html>
