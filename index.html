@@ -213,7 +213,8 @@
         <select id="model">
           <option value="onnx-community/whisper-tiny">Tiny — paling cepat, akurasi dasar (~75 MB)</option>
           <option value="onnx-community/whisper-base" selected>Base — seimbang (disarankan) (~145 MB)</option>
-          <option value="onnx-community/whisper-small">Small — paling akurat, lebih lambat (~480 MB)</option>
+          <option value="onnx-community/whisper-small">Small — lebih akurat, lebih lambat (~480 MB)</option>
+          <option value="onnx-community/whisper-large-v3-turbo">Large-v3 Turbo — paling akurat (terbaik utk Indonesia), butuh WebGPU (~800 MB–1.6 GB)</option>
         </select>
       </div>
       <div class="field">
@@ -263,6 +264,7 @@
       <span class="hint">Model diunduh sekali, lalu tersimpan di cache browser.</span>
     </div>
 
+    <div id="modelNote" class="note hidden"></div>
     <div id="mobileNote" class="note hidden"></div>
 
     <div id="progress" class="progress-wrap">
@@ -321,7 +323,7 @@ const els = {
   transcript: $('transcript'), segCount: $('segCount'),
   copyBtn: $('copyBtn'), txtBtn: $('txtBtn'), srtBtn: $('srtBtn'),
   vttBtn: $('vttBtn'), txtTs: $('txtTs'), toast: $('toast'),
-  mobileNote: $('mobileNote'),
+  mobileNote: $('mobileNote'), modelNote: $('modelNote'),
 };
 
 /* ---------- penangkap error (supaya tidak blank tanpa info) ---------- */
@@ -362,10 +364,16 @@ const HAS_WEBGPU = typeof navigator !== 'undefined' && 'gpu' in navigator;
 // Maka di HP kita paksa pakai WASM (CPU) yang jauh lebih stabil.
 const USE_WEBGPU = HAS_WEBGPU && !IS_MOBILE;
 function pickDevice() { return USE_WEBGPU ? 'webgpu' : 'wasm'; }
-function pickDtype(device) {
-  return device === 'webgpu'
-    ? { encoder_model: 'fp32', decoder_model_merged: 'q4' }
-    : 'q8';
+function pickDtype(device, model) {
+  // Model "large" punya encoder sangat besar; fp32 akan kehabisan memori,
+  // jadi pakai fp16 (WebGPU) atau q4 (CPU/WASM) supaya muat.
+  const isLarge = /large/i.test(model || '');
+  if (device === 'webgpu') {
+    return isLarge
+      ? { encoder_model: 'fp16', decoder_model_merged: 'q4' }
+      : { encoder_model: 'fp32', decoder_model_merged: 'q4' };
+  }
+  return isLarge ? 'q4' : 'q8';
 }
 (function showDevice() {
   if (USE_WEBGPU) {
@@ -389,6 +397,26 @@ if (IS_MOBILE) {
     'Pakai klip pendek dulu (idealnya di bawah ~5 menit di HP) untuk memastikan jalan. ' +
     'Untuk file panjang, gunakan laptop atau mode server.';
 }
+
+/* ---------- catatan model (akurasi vs kebutuhan perangkat) ---------- */
+function updateModelNote() {
+  const isLarge = /large/i.test(els.model.value);
+  if (!isLarge) { els.modelNote.classList.add('hidden'); return; }
+  els.modelNote.classList.remove('hidden');
+  if (USE_WEBGPU) {
+    els.modelNote.innerHTML =
+      '💡 <b>Large-v3 Turbo</b> dipilih — akurasi terbaik untuk bahasa Indonesia. ' +
+      'Unduhan pertama cukup besar (~800 MB–1.6 GB), setelah itu tersimpan di cache browser. ' +
+      'Untuk hasil terbaik, set <b>Bahasa</b> ke Indonesia (jangan Auto).';
+  } else {
+    els.modelNote.innerHTML =
+      '⚠️ <b>Large-v3 Turbo</b> sangat berat tanpa WebGPU' + (IS_MOBILE ? ' dan tidak disarankan di HP' : '') + '. ' +
+      'Di CPU/WASM prosesnya bisa sangat lambat atau gagal karena kehabisan memori. ' +
+      'Disarankan pakai <b>Chrome/Edge di laptop/PC</b>, atau pilih model Small.';
+  }
+}
+els.model.addEventListener('change', updateModelNote);
+updateModelNote();
 
 /* ---------- file selection ---------- */
 els.drop.addEventListener('click', () => els.file.click());
@@ -610,7 +638,7 @@ async function startTranscribe() {
   buildPlayer(currentFile);
 
   const device = pickDevice();
-  const dtype = pickDtype(device);
+  const dtype = pickDtype(device, els.model.value);
   const w = ensureWorker();
   w.postMessage({
     type: 'run',
