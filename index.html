@@ -217,6 +217,27 @@
         </select>
       </div>
       <div class="field">
+        <label for="tsDur">Durasi per timestamp</label>
+        <select id="tsDur">
+          <option value="0" selected>Asli (mengikuti Whisper)</option>
+          <option value="1">1 detik</option>
+          <option value="2">2 detik</option>
+          <option value="3">3 detik</option>
+          <option value="4">4 detik</option>
+          <option value="5">5 detik</option>
+          <option value="6">6 detik</option>
+          <option value="7">7 detik</option>
+          <option value="8">8 detik</option>
+          <option value="9">9 detik</option>
+          <option value="10">10 detik</option>
+          <option value="11">11 detik</option>
+          <option value="12">12 detik</option>
+          <option value="13">13 detik</option>
+          <option value="14">14 detik</option>
+          <option value="15">15 detik</option>
+        </select>
+      </div>
+      <div class="field">
         <label for="lang">Bahasa audio</label>
         <select id="lang">
           <option value="auto" selected>Auto-detect</option>
@@ -293,7 +314,7 @@ const $ = (id) => document.getElementById(id);
 
 const els = {
   drop: $('drop'), file: $('file'), fileInfo: $('fileInfo'),
-  model: $('model'), lang: $('lang'), run: $('run'), device: $('device'),
+  model: $('model'), lang: $('lang'), tsDur: $('tsDur'), run: $('run'), device: $('device'),
   progress: $('progress'), pbar: $('pbar'), pbarFill: $('pbarFill'),
   pText: $('pText'), pTimer: $('pTimer'), error: $('error'),
   results: $('results'), playerWrap: $('playerWrap'),
@@ -327,7 +348,8 @@ try {
 
 let currentFile = null;     // selected File
 let mediaEl = null;         // <audio>/<video>
-let segments = [];          // [{start, end, text}]
+let rawSegments = [];       // hasil mentah dari Whisper [{start, end, text}]
+let segments = [];          // segmen yang ditampilkan (mungkin sudah dikelompokkan per durasi)
 let worker = null;
 let fileProgress = {};      // model download tracking
 let timerInt = null, timerStart = 0;
@@ -541,6 +563,14 @@ function onWorkerMessage(e) {
 /* ---------- run ---------- */
 els.run.addEventListener('click', startTranscribe);
 
+// Ubah pengelompokan timestamp secara langsung tanpa transkrip ulang.
+els.tsDur.addEventListener('change', () => {
+  if (!rawSegments.length) return;
+  applyTimestampGrouping();
+  renderSegments();
+  if (mediaEl) highlightActive();
+});
+
 async function startTranscribe() {
   if (!currentFile) return;
 
@@ -643,26 +673,61 @@ function renderResults(output) {
   const chunks = (output && output.chunks) ? output.chunks : null;
   const duration = mediaEl && isFinite(mediaEl.duration) ? mediaEl.duration : null;
 
-  segments = [];
+  rawSegments = [];
   if (chunks && chunks.length) {
     chunks.forEach((c, i) => {
       const ts = c.timestamp || [];
       let start = ts[0] != null ? ts[0] : 0;
       let end = ts[1];
-      segments.push({ start, end, text: (c.text || '').trim() });
+      rawSegments.push({ start, end, text: (c.text || '').trim() });
     });
     // fix trailing null ends
-    for (let i = 0; i < segments.length; i++) {
-      if (segments[i].end == null) {
-        segments[i].end = (i + 1 < segments.length) ? segments[i+1].start : (duration || segments[i].start + 3);
+    for (let i = 0; i < rawSegments.length; i++) {
+      if (rawSegments[i].end == null) {
+        rawSegments[i].end = (i + 1 < rawSegments.length) ? rawSegments[i+1].start : (duration || rawSegments[i].start + 3);
       }
     }
   } else {
-    segments.push({ start: 0, end: duration || 0, text: ((output && output.text) || '').trim() });
+    rawSegments.push({ start: 0, end: duration || 0, text: ((output && output.text) || '').trim() });
   }
   // drop empties
-  segments = segments.filter(s => s.text.length > 0);
+  rawSegments = rawSegments.filter(s => s.text.length > 0);
 
+  applyTimestampGrouping();
+  renderSegments();
+  els.results.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+/* ---------- pengelompokan segmen berdasarkan durasi per timestamp ---------- */
+function applyTimestampGrouping() {
+  const dur = parseInt(els.tsDur.value, 10) || 0;
+  if (!dur || !rawSegments.length) {
+    // Asli: pakai segmen mentah apa adanya
+    segments = rawSegments.map(s => ({ start: s.start, end: s.end, text: s.text }));
+    return;
+  }
+  // Kelompokkan segmen mentah ke dalam blok berdurasi ~dur detik.
+  segments = [];
+  let cur = null;
+  for (const s of rawSegments) {
+    if (!cur) {
+      cur = { start: s.start, end: s.end, text: s.text };
+      continue;
+    }
+    // Jika menambah segmen ini masih dalam batas durasi target, gabungkan.
+    if (s.end - cur.start <= dur) {
+      cur.end = s.end;
+      cur.text += ' ' + s.text;
+    } else {
+      segments.push(cur);
+      cur = { start: s.start, end: s.end, text: s.text };
+    }
+  }
+  if (cur) segments.push(cur);
+  segments.forEach(s => { s.text = s.text.replace(/\s+/g, ' ').trim(); });
+}
+
+function renderSegments() {
   els.transcript.innerHTML = '';
   segments.forEach((s, i) => {
     const div = document.createElement('div');
@@ -676,7 +741,6 @@ function renderResults(output) {
 
   els.segCount.textContent = segments.length + ' segmen';
   els.results.classList.remove('hidden');
-  els.results.scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 
 /* ---------- time formatting ---------- */
