@@ -355,6 +355,8 @@ let segments = [];          // segmen yang ditampilkan (mungkin sudah dikelompok
 let worker = null;
 let fileProgress = {};      // model download tracking
 let timerInt = null, timerStart = 0;
+let lastDevice = null;          // device pada run terakhir (untuk deteksi fallback)
+let triedWasmFallback = false;  // cegah loop fallback tak berujung
 
 /* ---------- device & platform detection ---------- */
 const IS_MOBILE = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent)
@@ -362,7 +364,18 @@ const IS_MOBILE = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini
 const HAS_WEBGPU = typeof navigator !== 'undefined' && 'gpu' in navigator;
 // WebGPU di iOS/Android masih sering bikin proses GPU crash (tab dimuat ulang/blank).
 // Maka di HP kita paksa pakai WASM (CPU) yang jauh lebih stabil.
-const USE_WEBGPU = HAS_WEBGPU && !IS_MOBILE;
+// Penting: 'gpu' in navigator BELUM menjamin adapter benar-benar bisa dipakai
+// (mis. Chrome di Linux/VM/remote desktop, atau GPU di-blocklist). Maka kita
+// verifikasi adapter sungguhan lewat requestAdapter() sebelum memutuskan.
+let USE_WEBGPU = false;        // ditentukan setelah verifikasi adapter (lihat initDevice)
+let webgpuChecked = false;
+async function verifyWebGPU() {
+  if (!HAS_WEBGPU || IS_MOBILE) return false;
+  try {
+    const adapter = await navigator.gpu.requestAdapter();
+    return !!adapter;
+  } catch (_) { return false; }
+}
 function pickDevice() { return USE_WEBGPU ? 'webgpu' : 'wasm'; }
 function pickDtype(device, model) {
   // Model "large" punya encoder sangat besar; fp32 akan kehabisan memori,
@@ -375,7 +388,12 @@ function pickDtype(device, model) {
   }
   return isLarge ? 'q4' : 'q8';
 }
-(function showDevice() {
+function updateDeviceBadge() {
+  if (!webgpuChecked && HAS_WEBGPU && !IS_MOBILE) {
+    els.device.textContent = 'Memeriksa perangkat…';
+    els.device.className = 'badge';
+    return;
+  }
   if (USE_WEBGPU) {
     els.device.textContent = '⚡ WebGPU aktif';
     els.device.className = 'badge ok';
@@ -386,7 +404,8 @@ function pickDtype(device, model) {
     els.device.textContent = 'CPU (WASM), lebih lambat';
     els.device.className = 'badge warn';
   }
-})();
+}
+updateDeviceBadge();
 
 /* ---------- mobile tuning ---------- */
 if (IS_MOBILE) {
@@ -417,6 +436,17 @@ function updateModelNote() {
 }
 els.model.addEventListener('change', updateModelNote);
 updateModelNote();
+
+/* ---------- verifikasi WebGPU sungguhan (async) ----------
+   Dijalankan sekali saat halaman dimuat. Kalau adapter tak tersedia,
+   USE_WEBGPU tetap false sehingga kita langsung memakai CPU/WASM dan
+   tidak menabrak error "Failed to get GPU adapter" saat transkrip. */
+(async function initDevice() {
+  USE_WEBGPU = await verifyWebGPU();
+  webgpuChecked = true;
+  updateDeviceBadge();
+  updateModelNote();
+})();
 
 /* ---------- file selection ---------- */
 els.drop.addEventListener('click', () => els.file.click());
@@ -582,6 +612,23 @@ function onWorkerMessage(e) {
     resetRunning();
   } else if (type === 'error') {
     stopTimer();
+    // Fallback otomatis: kalau WebGPU gagal (adapter/backend tak tersedia),
+    // ulang sekali dengan CPU/WASM supaya tidak hard-error.
+    if (lastDevice === 'webgpu' && !triedWasmFallback &&
+        /webgpu|gpu adapter|no available backend|backend found/i.test(String(data))) {
+      triedWasmFallback = true;
+      USE_WEBGPU = false;
+      webgpuChecked = true;
+      updateDeviceBadge();
+      updateModelNote();
+      // Worker bisa tak stabil setelah gagal GPU → buat ulang yang bersih.
+      try { worker && worker.terminate(); } catch (_) {}
+      worker = null;
+      fileProgress = {};
+      setIndeterminate('WebGPU tidak tersedia — beralih ke CPU (WASM)…');
+      runTranscription('wasm');
+      return;
+    }
     persistError('Transkrip gagal: ' + data);
     showError('Terjadi kesalahan: ' + data);
     resetRunning();
@@ -615,9 +662,17 @@ async function startTranscribe() {
   hideError();
   els.results.classList.add('hidden');
   els.transcript.innerHTML = '';
-  fileProgress = {};
   els.run.disabled = true;
   els.progress.classList.add('show');
+  triedWasmFallback = false;
+
+  await runTranscription(pickDevice());
+}
+
+// Mendekode audio lalu mengirim pekerjaan ke worker pada `device` tertentu.
+// Dipisah dari startTranscribe agar bisa dipanggil ulang saat fallback ke WASM.
+async function runTranscription(device) {
+  fileProgress = {};
   setIndeterminate('Membaca & mendekode audio…');
 
   let audio;
@@ -637,8 +692,8 @@ async function startTranscribe() {
   // build player
   buildPlayer(currentFile);
 
-  const device = pickDevice();
   const dtype = pickDtype(device, els.model.value);
+  lastDevice = device;
   const w = ensureWorker();
   w.postMessage({
     type: 'run',
